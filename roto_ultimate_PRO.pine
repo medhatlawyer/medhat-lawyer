@@ -1,0 +1,603 @@
+//@version=5
+  
+indicator("Roto Ultimate PRO – Full Combo + Advanced MACD.R + Advanced RSI.R + Dashboard (Merged)", overlay=true, max_labels_count=500, max_boxes_count=500, max_lines_count=500, precision=2)
+  
+
+  
+// ================= 1. الإعدادات الأصلية =================
+  
+lenEMA = input.int(50, "EMA Length")
+  
+atrPeriod = input.int(14, "ATR Period")
+  
+factor = input.float(3.0, "ATR Multiplier (SuperTrend)")
+  
+volSMAfast = input.int(10, "Fast Volume SMA")
+  
+cciLength = input.int(14, "CCI Length")
+  
+cciThreshold = input.int(100, "CCI Threshold")
+  
+riskPercent = input.float(1.0, "Risk % per Trade", minval=0.1, maxval=10.0, step=0.1)
+  
+smcSwingLen = input.int(20, "SMC Swing Length")
+  
+flashThreshold = input.int(85, "Flash Opportunity Threshold (%)")
+  
+superFlashThreshold = input.int(95, "Super Flash Threshold (%)")
+  
+megaFlashThreshold = input.int(110, "Mega Flash Threshold (%)")
+  
+volMult = input.float(3.0, "Whale Volume Multiplier")
+  
+pivotLen = input.int(20, "Pivot Line Length")
+  
+pivotEMA = ta.ema(close, pivotLen)
+  
+
+  
+// ================= 2. إعدادات Pulse MACD.R الأصلية (ثابتة) =================
+  
+fast_period = input.int(12, "الفترة السريعة")
+  
+slow_period = input.int(26, "الفترة البطيئة")
+  
+
+  
+// ================= 3. حساب Pulse MACD.R الأصلي (نسخة مطورة بعد الدمج) =================
+  
+// موجودة حسابات مساعدة من الأصل
+  
+true_range_percent = ta.tr / close * 100
+  
+volume_ratio = volume / ta.sma(volume, 20)
+  
+price_momentum = math.abs(close - close[1]) / close[1] * 100
+  
+pulse_rate = ta.ema(true_range_percent * volume_ratio * price_momentum, 5)
+  
+// macd الأصلي (نستخدم نفس مكونات الأصل ولكن نحسّن المخرج)
+  
+[macd_line, signal_line, hist_line] = ta.macd(close, fast_period, slow_period, 9)
+  
+
+  
+// دالة tanh آمنة (لتجنب overflow)
+  
+tanh_safe(x) =>
+  
+    if x > 20
+  
+        1.0
+  
+    else if x < -20
+  
+        -1.0
+  
+    else
+  
+        (math.exp(x) - math.exp(-x)) / (math.exp(x) + math.exp(-x))
+  
+
+  
+// pulse_raw = نسبة الهيستوجرام على معدل الـ pulse_rate (مع حماية من القسمة على صفر)
+  
+pulse_raw = hist_line / (pulse_rate == 0 ? 1e-9 : pulse_rate)
+  
+
+  
+// نطبّق تحويل تنعيم/تطبيع — هذا يعطي نتيجة أقوى وأقل ضوضاء من النسخة البسيطة
+  
+// نستخدم tanh لتقييد القيم، ثم نضرب في 100 للحصول على مقياس شبيه بالأصل
+  
+pulse_macdr = tanh_safe(pulse_raw) * 100
+  
+
+  
+// خطوط إشارة داخلية (نحتفظ بالـ signal_line_pulse للحفاظ على بعض إشارات الأصل لو احتجنا)
+  
+signal_line_pulse = ta.ema(pulse_macdr, 9)
+  
+histogram_pulse = pulse_macdr - signal_line_pulse
+  
+
+  
+// أعادة تعيين متغيرات Roto1 حسب النسخة المطوّرة
+  
+roto1_roto = pulse_macdr
+  
+roto1_bull = roto1_roto > 0
+  
+
+  
+// ================= 4. تعديل RSI.R — نسخة مطورة (سريع + بطيء + دمج) =================
+  
+rsi_fast_len = input.int(7, "RSI Fast Length")
+  
+rsi_slow_len = input.int(21, "RSI Slow Length")
+  
+rsi_main_len = input.int(14, "RSI Main Length")
+  
+
+  
+rsi_main = ta.rsi(close, rsi_main_len)
+  
+rsi_fast = ta.rsi(close, rsi_fast_len)
+  
+rsi_slow = ta.rsi(close, rsi_slow_len)
+  
+
+  
+// نعالج المكونات ثم نركّب إشارة نهائية تشبه مقياس الأصل (قيمة حول -50..+50)
+  
+rsi_component_main = rsi_main - 50
+  
+rsi_component_trend = rsi_fast - rsi_slow
+  
+
+  
+// وزن مبدئي: 70% للـ main و30% لاتجاه الـ fast-slow (يمكن تغييره بالـ inputs لاحقاً)
+  
+roto2_roto = rsi_component_main * 0.7 + rsi_component_trend * 0.3
+  
+roto2_bull = roto2_roto > 0
+  
+
+  
+// ================= 4.b إعادة باقي مؤشرات Roto كما في الأصل =================
+  
+upMove = high - high[1]
+  
+downMove = low[1] - low
+  
+plusDM = (upMove > downMove and upMove>0)? upMove : 0
+  
+minusDM = (downMove > upMove and downMove>0)? downMove : 0
+  
+trur = ta.rma(ta.tr(true),14)
+  
+plusDI = 100*ta.rma(plusDM,14)/trur
+  
+minusDI = 100*ta.rma(minusDM,14)/trur
+  
+adxVal = ta.rma(100*math.abs(plusDI-minusDI)/(plusDI+minusDI),14)
+  
+roto3_roto = plusDI - minusDI
+  
+roto3_bull = roto3_roto>0 and adxVal>20
+  
+
+  
+roto4_roto = (volume - ta.sma(volume,20))/ta.sma(volume,20)*100
+  
+roto4_bull = roto4_roto>0
+  
+
+  
+atrVal = ta.atr(atrPeriod)
+  
+roto5_roto = 2 - (atrVal/close*100)
+  
+roto5_bull = roto5_roto>0
+  
+
+  
+roto6_roto = ta.ema(math.abs(close-close[1])/close[1]*200,3)
+  
+roto6_bull = roto6_roto>roto6_roto[1] and roto6_roto<2.0
+  
+
+  
+k = ta.sma(ta.stoch(close,high,low,14),3)
+  
+d = ta.sma(k,3)
+  
+roto7_roto = k - d
+  
+roto7_bull = roto7_roto>0 and k<80
+  
+
+  
+ema_fast = ta.ema(close,10)
+  
+ema_slow = ta.ema(close,21)
+  
+ema_trend = ta.ema(close,lenEMA)
+  
+roto8_roto = close-ema_trend
+  
+roto8_bull = roto8_roto>0 and ema_fast>ema_slow
+  
+
+  
+price_trend = ta.linreg(close,20,0)
+  
+volume_trend = ta.linreg(volume,20,0)
+  
+trend_alignment = math.sign(price_trend)==math.sign(volume_trend)
+  
+trend_strength = math.abs(price_trend)/close*100
+  
+roto9_roto = price_trend
+  
+roto9_bull = trend_alignment and trend_strength>0.1 and price_trend>0
+  
+
+  
+typical_price = (high+low+close)/3
+  
+sma_tp = ta.sma(typical_price,20)
+  
+mad = ta.sma(math.abs(typical_price-sma_tp),20)
+  
+roto10_roto = (typical_price-sma_tp)/(0.015*mad)
+  
+roto10_bull = roto10_roto>roto10_roto[1]
+  
+
+  
+obv = ta.cum(close>close[1]?volume:close<close[1]?-volume:0)
+  
+obv_ma = ta.sma(obv,20)
+  
+obv_trend = ta.linreg(obv,10,0)
+  
+roto11_roto = obv-obv_ma
+  
+roto11_bull = roto11_roto>0 and obv_trend>0
+  
+
+  
+roto12_roto = ta.ema(close-ta.ema(close,14),7)
+  
+roto12_bull = roto12_roto>0
+  
+
+  
+roto13_roto = ta.ema(close-ta.ema(close,28),14)
+  
+roto13_bull = roto13_roto>0
+  
+
+  
+roto14_roto = close-close[5]
+  
+roto14_bull = roto14_roto>0
+  
+
+  
+roto15_roto = obv - ta.linreg(obv,14,0)
+  
+roto15_bull = roto15_roto>0
+  
+
+  
+rsi_val = ta.rsi(close,14)
+  
+roto16_roto = rsi_val - ta.linreg(rsi_val,14,0)
+  
+roto16_bull = roto16_roto>0
+  
+
+  
+roto17_roto = volume - ta.sma(volume,20)
+  
+roto17_bull = roto17_roto>0
+  
+
+  
+roto18_roto = atrVal - ta.linreg(atrVal,14,0)
+  
+roto18_bull = roto18_roto>0
+  
+
+  
+// ================= 5. SuperTrend (نتركها كما في الأصل) =================
+  
+superTrendUp = (high+low)/2 - factor*atrVal
+  
+superTrendDown = (high+low)/2 + factor*atrVal
+  
+var float superTrendLine = na
+  
+var int trendDir = 1
+  
+if na(superTrendLine)
+  
+    superTrendLine := superTrendUp 
+  
+if close > superTrendLine[1]
+  
+    trendDir := 1 
+  
+    superTrendLine := math.max(superTrendUp,superTrendLine[1]) 
+  
+else
+  
+    trendDir := -1 
+  
+    superTrendLine := math.min(superTrendDown,superTrendLine[1]) 
+  
+
+  
+// ================= 6. قوة الإشارة والـ Combo =================
+  
+roto_values = array.from(roto1_roto,roto2_roto,roto3_roto,roto4_roto,roto5_roto,roto6_roto,roto7_roto,roto8_roto,roto9_roto,roto10_roto,roto11_roto,roto12_roto,roto13_roto,roto14_roto,roto15_roto,roto16_roto,roto17_roto,roto18_roto)
+  
+bullCount = 0
+  
+for i=0 to array.size(roto_values)-1
+  
+    if array.get(roto_values,i)>0 
+  
+        bullCount+=1 
+  
+totalInd=18
+  
+signalStrength = bullCount/totalInd*100
+  
+finalSignal = signalStrength>=50 ? "BUY":"SELL"
+  
+flashLevel = signalStrength>=flashThreshold?1:0
+  
+flashLevel := signalStrength>=superFlashThreshold?2:flashLevel
+  
+flashLevel := signalStrength>=megaFlashThreshold?3:flashLevel
+  
+flashSymbol = flashLevel==1?"⚡":flashLevel==2?"⚡⚡":flashLevel==3?"⚡⚡⚡":""
+  
+
+  
+// ================= 7. Waves Strength =================
+  
+waves_set = array.from(roto1_bull, roto2_bull, roto3_bull, roto4_bull)
+  
+calcWavesStrength(arr) =>
+  
+    cnt = 0
+  
+    for i = 0 to array.size(arr) - 1
+  
+        if array.get(arr, i)
+  
+            cnt += 1
+  
+    array.size(arr) > 0 ? cnt / array.size(arr) * 100 : 0
+  
+wavesBullStrength = calcWavesStrength(waves_set)
+  
+wavesBearStrength = 100 - wavesBullStrength
+  
+
+  
+// ================= 8. Dashboard (شكل روتو الأصلي، لكن يقارِن القيم الجديدة) =================
+  
+var table rotoTable = table.new(position.top_right,5,20,bgcolor=color.new(color.black,80),border_width=1)
+  
+if barstate.islast
+  
+    roto_names = array.from("Pulse MACD.R","RSI.R","ADX.R","Volume.R","ATR.R","FastVol.R","Stoch.R","EMA.R","Trend.R","CCI.R","OBV.R","CycleToday.R","CyclePrev.R","Momentum.R","OBVTrend.R","RSI Trend.R","VolSpike.R","ATR Trend.R") 
+  
+    roto_bulls = array.from(roto1_bull,roto2_bull,roto3_bull,roto4_bull,roto5_bull,roto6_bull,roto7_bull,roto8_bull,roto9_bull,roto10_bull,roto11_bull,roto12_bull,roto13_bull,roto14_bull,roto15_bull,roto16_bull,roto17_bull,roto18_bull) 
+  
+    roto_roto = array.from(roto1_roto,roto2_roto,roto3_roto,roto4_roto,roto5_roto,roto6_roto,roto7_roto,roto8_roto,roto9_roto,roto10_roto,roto11_roto,roto12_roto,roto13_roto,roto14_roto,roto15_roto,roto16_roto,roto17_roto,roto18_roto) 
+  
+
+  
+    table.cell(rotoTable,0,0,"Roto.R",bgcolor=color.gray,text_color=color.white)
+  
+    table.cell(rotoTable,1,0,"Signal",bgcolor=color.gray,text_color=color.white)
+  
+    table.cell(rotoTable,2,0,"Roto%",bgcolor=color.gray,text_color=color.white)
+  
+    table.cell(rotoTable,3,0,"Bull",bgcolor=color.gray,text_color=color.white)
+  
+    table.cell(rotoTable,4,0,"Flash",bgcolor=color.gray,text_color=color.white)
+  
+    
+  
+    for i=0 to array.size(roto_names)-1
+  
+        table.cell(rotoTable,0,i+1,array.get(roto_names,i), text_color=color.white)
+  
+        table.cell(rotoTable,1,i+1,array.get(roto_bulls,i)?"BUY":"SELL", text_color=array.get(roto_bulls,i)?color.green:color.red)
+  
+        table.cell(rotoTable,2,i+1,str.tostring(array.get(roto_roto,i),"#.1")+"%", text_color=color.yellow)
+  
+        table.cell(rotoTable,3,i+1,array.get(roto_bulls,i)?"✅":"❌", text_color=array.get(roto_bulls,i)?color.green:color.red)
+  
+        table.cell(rotoTable,4,i+1,array.get(roto_roto,i)>=flashThreshold?flashSymbol:"", text_color=array.get(roto_roto,i)>=flashThreshold?color.orange:color.gray)
+  
+
+  
+    table.cell(rotoTable,0,18,"Combo", bgcolor=color.blue, text_color=color.white)
+  
+    table.cell(rotoTable,1,18,finalSignal, text_color=finalSignal=="BUY"?color.green:color.red)
+  
+    table.cell(rotoTable,2,18,str.tostring(signalStrength,"#.0")+"%", text_color=color.yellow)
+  
+    table.cell(rotoTable,3,18,"Breakout ≈ "+str.tostring(100-signalStrength,"#.0")+"%", text_color=color.white)
+  
+    table.cell(rotoTable,4,18,flashSymbol, text_color=flashLevel>0?color.orange:color.gray)
+  
+
+  
+// ================= 9. إشارات البيع والشراء =================
+  
+plotshape(finalSignal=="BUY", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.tiny, text="BUY")
+  
+plotshape(finalSignal=="SELL", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.tiny, text="SELL")
+  
+barcolor(finalSignal=="BUY"?color.new(color.green,0):color.new(color.red,0))
+  
+
+  
+// ================= 10. SMC Zones (صناديق الدعم/المقاومة) =================
+  
+swingLen = smcSwingLen
+  
+supportLevel = ta.lowest(low,swingLen)
+  
+resistLevel = ta.highest(high,swingLen)
+  
+supportColor = color.new(color.green, 100 - signalStrength)
+  
+resistColor = color.new(color.red, 100 - signalStrength)
+  
+var box supportBox = na
+  
+var box resistBox = na
+  
+if barstate.islast
+  
+    if na(supportBox)
+  
+        supportBox := box.new(bar_index-swingLen, supportLevel, bar_index, supportLevel+atrVal, bgcolor=supportColor, border_color=color.new(color.green,80))
+  
+    else
+  
+        box.set_left(supportBox, bar_index-swingLen)
+  
+        box.set_right(supportBox, bar_index)
+  
+        box.set_bottom(supportBox, supportLevel)
+  
+        box.set_top(supportBox, supportLevel+atrVal)
+  
+        box.set_bgcolor(supportBox, supportColor)
+  
+        box.set_border_color(supportBox,color.new(color.green,80))
+  
+    
+  
+    if na(resistBox)
+  
+        resistBox := box.new(bar_index-swingLen, resistLevel-atrVal, bar_index, resistLevel, bgcolor=resistColor, border_color=color.new(color.red,80))
+  
+    else
+  
+        box.set_left(resistBox, bar_index-swingLen)
+  
+        box.set_right(resistBox, bar_index)
+  
+        box.set_bottom(resistBox, resistLevel-atrVal)
+  
+        box.set_top(resistBox, resistLevel)
+  
+        box.set_bgcolor(resistBox, resistColor)
+  
+        box.set_border_color(resistBox,color.new(color.red,80))
+  
+
+  
+// ================= 11. Elliott ABC Waves + قوة الحروف (كما في الأصل) =================
+  
+pivoth = ta.pivothigh(high,3,3)
+  
+pivotl = ta.pivotlow(low,3,3)
+  
+var line lineA = na
+  
+var line lineB = na
+  
+var line lineC = na
+  
+var label labA = na
+  
+var label labB = na
+  
+var label labC = na
+  
+
+  
+A_inds = array.from(roto1_bull, roto3_bull, roto8_bull, roto9_bull)
+  
+B_inds = array.from(roto5_bull, roto12_bull, roto14_bull)
+  
+C_inds = array.from(roto10_bull, roto11_bull, roto16_bull)
+  
+
+  
+calcStrength(arr) =>
+  
+    cnt = 0
+  
+    for i=0 to array.size(arr)-1
+  
+        if array.get(arr,i)
+  
+            cnt += 1
+  
+    array.size(arr) > 0 ? cnt/array.size(arr)*100 : 0
+  
+
+  
+rawStrengthA = calcStrength(A_inds)
+  
+rawStrengthB = calcStrength(B_inds)
+  
+rawStrengthC = calcStrength(C_inds)
+  
+sumStrength = rawStrengthA + rawStrengthB + rawStrengthC
+  
+strengthA = sumStrength == 0 ? 0 : (rawStrengthA / sumStrength) * 100
+  
+strengthB = sumStrength == 0 ? 0 : (rawStrengthB / sumStrength) * 100
+  
+strengthC = sumStrength == 0 ? 0 : (rawStrengthC / sumStrength) * 100
+  
+
+  
+if not na(pivoth)
+  
+    lineA := line.new(bar_index[3], high[3], bar_index, high, color=color.red, width=2)
+  
+    if not na(labA)
+  
+        label.delete(labA)
+  
+    labA := label.new(bar_index[3], high[3], "A "+str.tostring(strengthA,"#.0")+"%", style=label.style_label_down, color=color.red, textcolor=color.white)
+  
+
+  
+if not na(pivotl) and not na(lineA)
+  
+    lineB := line.new(line.get_x2(lineA), line.get_y2(lineA), bar_index, low, color=color.green, width=2)
+  
+    if not na(labB)
+  
+        label.delete(labB)
+  
+    labB := label.new(bar_index, low, "B "+str.tostring(strengthB,"#.0")+"%", style=label.style_label_up, color=color.green, textcolor=color.white)
+  
+
+  
+if not na(pivoth) and not na(lineB)
+  
+    lineC := line.new(line.get_x2(lineB), line.get_y2(lineB), bar_index, high, color=color.blue, width=2)
+  
+    if not na(labC)
+  
+        label.delete(labC)
+  
+    labC := label.new(bar_index, high, "C "+str.tostring(strengthC,"#.0")+"%", style=label.style_label_down, color=color.blue, textcolor=color.white)
+  
+
+  
+// ================= 12. Pivot EMA Line (كما في الأصل) =================
+  
+pivotColor = close>pivotEMA ? color.green : color.red
+  
+plot(pivotEMA, color=pivotColor, style=plot.style_line, linewidth=2)
+  
+
+  
+// ================= 13. إشارات Pulse MACD.R (مبنية على المتغير المطور pulse_macdr) =================
+  
+buy_signal_macd = ta.crossover(pulse_macdr, 0)
+  
+sell_signal_macd = ta.crossunder(pulse_macdr, 0)
+  
+plotshape(buy_signal_macd, title="شراء Pulse MACD", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.tiny)
+  
+plotshape(sell_signal_macd, title="بيع Pulse MACD", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.tiny)
