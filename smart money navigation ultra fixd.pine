@@ -1,0 +1,114 @@
+//@version=5
+indicator("🔥 Smart Money Navigation ULTRA FIXED", overlay=true)
+
+// =========================
+// 1. VWAP
+// =========================
+vwapValue = ta.vwap(close)
+
+// =========================
+// 2. EMA Trend Filter
+// =========================
+ema50 = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+trend_ok = close > ema50 and ema50 > ema200
+
+// =========================
+// 3. Structure
+// =========================
+higher_low = low > low[1]
+bos_up = close > high[2]
+bos_down = close < low[2]
+
+// =========================
+// 4. Volume
+// =========================
+vol_mean = ta.sma(volume, 20)
+vol_std  = ta.stdev(volume, 20)
+vol_z = (volume - vol_mean) / vol_std
+volume_spike = vol_z > 1.5
+
+// =========================
+// 5. ATR
+// =========================
+atr = ta.atr(14)
+atr_ma = ta.sma(atr, 20)
+active_market = atr > atr_ma
+
+// =========================
+// 6. Liquidity Grab
+// =========================
+upper_wick = high - math.max(close, open)
+liq_grab_up = upper_wick > atr * 0.6
+
+// =========================
+// 7. RSI
+// =========================
+rsi = ta.rsi(close, 14)
+momentum_ok = rsi > 55
+
+// =========================
+// 8. Breakout
+// =========================
+recent_high = ta.highest(high, 10)
+strong_breakout = close > recent_high[1]
+
+// =========================
+// 9. Score
+// =========================
+score = 0
+score += close > vwapValue ? 1 : 0
+score += bos_up ? 2 : 0
+score += higher_low ? 1 : 0
+score += volume_spike ? 1 : 0
+score += active_market ? 1 : 0
+
+// =========================
+// 10. Navigation
+// =========================
+returns = (close - close[1]) / close[1]
+velocity = ta.sma(returns, 5)
+
+angle = math.atan(velocity)
+angle_change = angle - angle[1]
+
+price_move = close - close[5]
+closing_velocity = price_move / 5
+
+nav_signal = 4 * closing_velocity * angle_change
+trend_stable = math.abs(angle_change) < 0.001
+
+// =========================
+// 🔥 ENTRY (FIXED CLEAN)
+// =========================
+cond1 = score >= 5
+cond2 = volume_spike
+cond3 = bos_up
+cond4 = trend_stable
+cond5 = nav_signal > 0
+cond6 = not liq_grab_up[1]
+cond7 = trend_ok
+cond8 = momentum_ok
+cond9 = strong_breakout
+
+entry = cond1 and cond2 and cond3 and cond4 and cond5 and cond6 and cond7 and cond8 and cond9
+
+// =========================
+// EXIT
+// =========================
+exit = liq_grab_up or bos_down or math.abs(angle_change) > ta.stdev(angle_change, 10)
+
+// =========================
+// VISUAL
+// =========================
+plot(vwapValue, color=color.orange)
+plot(ema50, color=color.blue)
+plot(ema200, color=color.red)
+
+bgcolor(score >= 5 ? color.new(color.green, 85) :
+       score >= 3 ? color.new(color.blue, 85) :
+       score == 2 ? color.new(color.gray, 90) :
+       color.new(color.red, 85))
+
+plotshape(entry, location=location.belowbar, color=color.lime, style=shape.triangleup, size=size.small)
+plotshape(exit, location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small)
