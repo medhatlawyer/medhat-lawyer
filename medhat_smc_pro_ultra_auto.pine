@@ -1,0 +1,173 @@
+//@version=5
+indicator("MEDHAT SMC PRO ⚡ Ultra PRO Auto Market", overlay=true, max_boxes_count=500, max_lines_count=100)
+
+// ========= INPUTS =========
+volFilter      = input.float(1.5, "Volume Filter")
+atrMultSL      = input.float(1.5, "SL Multiplier")
+strengthFilter = input.int(4, "Signal Strength (1-8)")
+retestBars     = input.int(3, "Retest Bars for Sniper Entry")
+targetsCount   = input.int(3, "Number of TP Levels")
+riskPercent    = input.float(1.0, "Risk % per Trade")
+useWeakMomentum = input.bool(true, "Enable Weak Momentum Filter")
+useDivergence   = input.bool(true, "Enable Divergence Filter")
+adxLength      = input.int(14, "ADX Period")
+adxSmoothing   = input.int(14, "ADX Smoothing")
+
+// ========= AUTO MARKET SETTINGS =========
+var float probThreshold = 0.7
+var float rr            = 2.0
+var float trailingATR   = 1.0
+
+if syminfo.prefix == "EGX"      // سوق مصر
+    probThreshold := 0.75
+    rr            := 2.0
+    trailingATR   := 1.0
+else if syminfo.prefix == "BINANCE"  // كريبتو
+    probThreshold := 0.70
+    rr            := 2.5
+    trailingATR   := 1.2
+else if syminfo.prefix == "FX"      // فوركس
+    probThreshold := 0.80
+    rr            := 2.0
+    trailingATR   := 1.0
+else
+    probThreshold := 0.75
+    rr            := 2.0
+    trailingATR   := 1.0
+
+// ========= CORE =========
+atr      = ta.atr(14)
+avgVol   = ta.sma(volume,20)
+validVol = volume > avgVol * volFilter
+
+// ========= TREND =========
+ema50     = ta.ema(close,50)
+trendUp   = close > ema50
+trendDown = close < ema50
+
+// ========= STRUCTURE =========
+hh        = ta.highest(high,10)
+ll        = ta.lowest(low,10)
+bosUp     = close > hh[1] and high > high[1]
+bosDown   = close < ll[1] and low < ll[1]
+retestUp   = ta.lowest(low, retestBars) < ll[1] and close > ll[1]
+retestDown = ta.highest(high, retestBars) > hh[1] and close < hh[1]
+
+// ========= MOMENTUM =========
+body        = math.abs(close - open)
+candleRange = high - low
+avgBody     = ta.sma(body,5)
+strongCandle = candleRange > 0 and body > avgBody * 1.5 and body / candleRange > 0.6
+
+// ========= WEAK MOMENTUM =========
+rsiVal = ta.rsi(close,14)
+rsiShort = ta.rsi(close,3)
+weakMomentumBuy  = useWeakMomentum ? rsiVal < 70 and rsiShort < rsiVal : true
+weakMomentumSell = useWeakMomentum ? rsiVal > 30 and rsiShort > rsiVal : true
+
+// ========= DIVERGENCE =========
+bullDiv = useDivergence ? ta.lowestbars(low,5) > 0 and rsiShort < rsiVal : true
+bearDiv = useDivergence ? ta.highestbars(high,5) > 0 and rsiShort > rsiVal : true
+
+// ========= SQUEEZE =========
+rangeNow  = ta.highest(high,5) - ta.lowest(low,5)
+rangePrev = ta.highest(high,15) - ta.lowest(low,15)
+squeeze   = rangeNow < rangePrev * 0.5
+
+// ========= FVG =========
+fvgUp   = low > high[2]
+fvgDown = high < low[2]
+
+// ========= LIQUIDITY =========
+liqHigh     = ta.highest(high,20)
+liqLow      = ta.lowest(low,20)
+liqGrabBuy  = low < liqLow[1] and close > liqLow
+liqGrabSell = high > liqHigh[1] and close < liqHigh
+
+// ========= POWER =========
+rangeHigh     = ta.highest(high,15)
+rangeLow      = ta.lowest(low,15)
+accumulation  = close < (rangeLow + (rangeHigh-rangeLow)*0.3)
+distribution  = close > (rangeHigh - (rangeHigh-rangeLow)*0.3)
+
+// ========= ADX / DMI =========
+[plusDI, minusDI, adxVal] = ta.dmi(adxLength, adxSmoothing)
+strongTrend = adxVal > 25
+
+// ========= PROBABILISTIC SCORE =========
+probBuy  = (trendUp ? 0.2 : 0) + (bosUp ? 0.25 : 0) + (liqGrabBuy ? 0.15 : 0) + (strongCandle ? 0.1 : 0) + (fvgUp ? 0.1 : 0) + (squeeze ? 0.1 : 0) + (weakMomentumBuy ? 0.1 : 0) + (bullDiv ? 0.1 : 0)
+probSell = (trendDown ? 0.2 : 0) + (bosDown ? 0.25 : 0) + (liqGrabSell ? 0.15 : 0) + (strongCandle ? 0.1 : 0) + (fvgDown ? 0.1 : 0) + (squeeze ? 0.1 : 0) + (weakMomentumSell ? 0.1 : 0) + (bearDiv ? 0.1 : 0)
+
+// ========= SIGNAL LEVELS =========
+sniperBuy  = probBuy >= probThreshold and (bosUp or retestUp) and strongTrend and validVol
+sniperSell = probSell >= probThreshold and (bosDown or retestDown) and strongTrend and validVol
+powerBuy   = sniperBuy and fvgUp and squeeze
+powerSell  = sniperSell and fvgDown and squeeze
+
+// ========= HEATMAP PIVOT ZONES =========
+pivotHigh = ta.pivothigh(high,5,5)
+pivotLow  = ta.pivotlow(low,5,5)
+if not na(pivotHigh)
+    intensity = math.min(probSell,1)
+    box.new(bar_index[5], pivotHigh, bar_index, pivotHigh + atr*0.8, bgcolor=color.new(color.red,intensity*90))
+if not na(pivotLow)
+    intensity = math.min(probBuy,1)
+    box.new(bar_index[5], pivotLow - atr*0.8, bar_index, pivotLow, bgcolor=color.new(color.green,intensity*90))
+
+// ========= TRADE MANAGEMENT =========
+var line entryLine = na
+var line slLine    = na
+var line[] tpLines = array.new_line()
+var float trailSL  = na
+var float[] tpReached = array.new_float()
+
+if sniperBuy or sniperSell
+    entry = close
+    isBuy = sniperBuy
+    sl    = isBuy ? entry - atr * atrMultSL * (1 - probBuy) : entry + atr * atrMultSL * (1 - probSell)
+    trailSL := sl
+
+    if not na(entryLine)
+        line.delete(entryLine)
+    if not na(slLine)
+        line.delete(slLine)
+    if array.size(tpLines) > 0
+        for i = 0 to array.size(tpLines)-1
+            line.delete(array.get(tpLines,i))
+    array.clear(tpLines)
+    array.clear(tpReached)
+
+    entryLine := line.new(bar_index, entry, bar_index + 100, entry, color=color.blue, width=2)
+    slLine    := line.new(bar_index, sl, bar_index + 100, sl, color=color.red, width=2)
+
+    for i = 1 to targetsCount
+        factor = 1 + i * 0.5
+        tpVal = isBuy ? entry + (entry - sl) * rr * factor * probBuy : entry - (sl - entry) * rr * factor * probSell
+        array.push(tpLines, line.new(bar_index, entry, bar_index + 100, tpVal, color=color.green, width=2, style=line.style_dashed))
+        array.push(tpReached, 0.0)
+
+// ========= UPDATE TRAILING STOP & TP SAFELY =========
+if not na(trailSL) and array.size(tpLines) > 0
+    if sniperBuy
+        trailSL := math.max(trailSL, close - atr * trailingATR)
+        line.set_y1(slLine, trailSL)
+        line.set_y2(slLine, trailSL)
+        for i = 0 to array.size(tpLines)-1
+            tpVal = line.get_y2(array.get(tpLines,i))
+            if close >= tpVal and array.get(tpReached,i) == 0.0
+                array.set(tpReached,i,1.0)
+    else
+        trailSL := math.min(trailSL, close + atr * trailingATR)
+        line.set_y1(slLine, trailSL)
+        line.set_y2(slLine, trailSL)
+        for i = 0 to array.size(tpLines)-1
+            tpVal = line.get_y2(array.get(tpLines,i))
+            if close <= tpVal and array.get(tpReached,i) == 0.0
+                array.set(tpReached,i,1.0)
+
+// ========= VISUAL =========
+plot(ema50, color=color.yellow, linewidth=2)
+plotshape(sniperBuy, location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small, title="Sniper Buy")
+plotshape(sniperSell, location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small, title="Sniper Sell")
+plotshape(powerBuy, location=location.belowbar, style=shape.labelup, text="⚡", size=size.small, color=color.lime, textcolor=color.black, title="Power Buy")
+plotshape(powerSell, location=location.abovebar, style=shape.labeldown, text="⚡", size=size.small, color=color.red, textcolor=color.white, title="Power Sell")
