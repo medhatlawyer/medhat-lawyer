@@ -1,0 +1,125 @@
+//@version=5
+indicator("MED-HAT PRO – Predictive Master v2 (Full SL/TP)", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ===================== INPUTS =====================
+rr          = input.float(2.0, "Risk/Reward Ratio", step=0.1)
+preSLBars   = input.int(20, "SL/TP Projection Bars")
+useVolumeFilter = input.bool(true, "Use Volume Filter")
+gapPct      = input.float(0.3, "Gap % Threshold")
+srLen       = input.int(20, "Support/Resistance Lookback")
+
+// ===================== CORE CALCULATIONS =====================
+avgVol = ta.sma(volume, 20)
+volShock = volume > avgVol * 2.0
+vol5 = ta.sma(volume, 5)
+vol20 = ta.sma(volume, 20)
+volAccel = vol5 > vol20
+lowerWick = close - low
+upperWick = high - close
+sellAbsorb = lowerWick > upperWick and volume > avgVol
+bbBasis = ta.sma(close,20)
+bbDev = ta.stdev(close,20)
+bbUpper = bbBasis + 2*bbDev
+bbLower = bbBasis - 2*bbDev
+bbWidth = (bbUpper - bbLower)/bbBasis
+compression = bbWidth < ta.lowest(bbWidth,20)
+atr = ta.atr(14)
+structureBreak = close > ta.highest(high,20)[1]
+accumulation = volume > avgVol and close > open and close > ta.sma(close,20)
+fakeBreak = high > ta.highest(high,20)[1] and close < ta.highest(high,20)[1]
+
+// ===================== TREND =====================
+emaFast = ta.ema(close, 5)
+emaMid  = ta.ema(close, 20)
+trendUp   = emaFast > emaMid
+trendDown = emaFast < emaMid
+
+// ===================== SUPPORT / RESISTANCE =====================
+var float lastKnownSupport = na
+var float lastKnownResistance = na
+currentSupport = ta.pivotlow(low, 3, 3)
+currentResistance = ta.pivothigh(high, 3, 3)
+if not na(currentSupport)
+    lastKnownSupport := currentSupport
+if not na(currentResistance)
+    lastKnownResistance := currentResistance
+lowestLow = ta.lowest(low, srLen)
+highestHigh = ta.highest(high, srLen)
+supportLevel = na(lastKnownSupport) ? lowestLow : lastKnownSupport
+resistanceLevel = na(lastKnownResistance) ? highestHigh : lastKnownResistance
+
+// ===================== DIGITAL SCORE =====================
+buyScore = 0.0
+buyScore := trendUp ? buyScore + 2.5 : buyScore - 1.0
+buyScore := buyScore + (volShock ? 0.8 : 0)
+buyScore := buyScore + (volAccel ? 0.6 : 0)
+buyScore := buyScore + (sellAbsorb ? 0.7 : 0)
+buyScore := buyScore + (compression ? 0.6 : 0)
+buyScore := buyScore + (structureBreak ? 1.0 : 0)
+buyScore := buyScore + (accumulation ? 1.0 : 0)
+buyScore := buyScore - (fakeBreak ? 1.5 : 0)
+
+sellScore = 0.0
+sellScore := trendDown ? sellScore + 2.5 : sellScore - 1.0
+sellScore := sellScore + (volShock ? 0.8 : 0)
+sellScore := sellScore + (volAccel ? 0.6 : 0)
+sellScore := sellScore + (compression ? 0.6 : 0)
+sellScore := sellScore + (structureBreak ? 1.0 : 0)
+sellScore := sellScore - (accumulation ? 1.0 : 0)
+sellScore := sellScore - (sellAbsorb ? 0.7 : 0)
+
+// ===================== SIGNALS =====================
+buySignal = buyScore >= 4.0
+sellSignal = sellScore >= 4.0
+preSignalBuy = trendUp and close > emaFast * 0.995
+preSignalSell = trendDown and close < emaFast * 1.005
+
+// ===================== SL/TP LINES =====================
+entryPriceBuy = close
+entryPriceSell = close
+buySL  = entryPriceBuy - atr * 1.5
+buyTP  = entryPriceBuy + (entryPriceBuy - buySL) * rr
+sellSL = entryPriceSell + atr * 1.5
+sellTP = entryPriceSell - (sellSL - entryPriceSell) * rr
+
+if buySignal or preSignalBuy
+    line.new(bar_index, buySL, bar_index + preSLBars, buySL, color=color.new(color.red,50), width=2)
+    line.new(bar_index, buyTP, bar_index + preSLBars, buyTP, color=color.new(color.green,50), width=2)
+    line.new(bar_index, entryPriceBuy, bar_index + preSLBars, entryPriceBuy, color=color.new(color.blue,50), width=2)
+
+if sellSignal or preSignalSell
+    line.new(bar_index, sellSL, bar_index + preSLBars, sellSL, color=color.new(color.red,50), width=2)
+    line.new(bar_index, sellTP, bar_index + preSLBars, sellTP, color=color.new(color.green,50), width=2)
+    line.new(bar_index, entryPriceSell, bar_index + preSLBars, entryPriceSell, color=color.new(color.blue,50), width=2)
+
+// ===================== BAR COLORS =====================
+barcolor(
+     buySignal ? color.new(color.green,0) :
+     sellSignal ? color.new(color.red,0) :
+     preSignalBuy ? color.new(color.green,70) :
+     preSignalSell ? color.new(color.red,70) :
+     na)
+
+// ===================== SMART LABELS =====================
+if compression
+    label.new(bar_index, low, "ENERGY", style=label.style_label_up, color=color.orange, textcolor=color.black)
+if accumulation
+    label.new(bar_index, low, "SMART", style=label.style_label_up, color=color.new(color.green,50), textcolor=color.black)
+if fakeBreak
+    label.new(bar_index, high, "TRAP", style=label.style_label_down, color=color.new(color.red,30), textcolor=color.white)
+
+// ===================== SIGNAL LABELS =====================
+if buySignal
+    label.new(bar_index, low, "⚡ BUY", style=label.style_label_up, color=color.new(color.green,0), textcolor=color.black)
+if sellSignal
+    label.new(bar_index, high, "⚡ SELL", style=label.style_label_down, color=color.new(color.red,0), textcolor=color.white)
+if preSignalBuy
+    label.new(bar_index, low, "Pre-BUY", style=label.style_label_up, color=color.new(color.green,70), textcolor=color.black)
+if preSignalSell
+    label.new(bar_index, high, "Pre-SELL", style=label.style_label_down, color=color.new(color.red,70), textcolor=color.white)
+
+// ===================== ALERTS =====================
+alertcondition(buySignal, "BUY Alert", "⚡ BUY signal!")
+alertcondition(sellSignal, "SELL Alert", "⚡ SELL signal!")
+alertcondition(preSignalBuy, "Pre-BUY Alert", "Pre-BUY signal")
+alertcondition(preSignalSell, "Pre-SELL Alert", "Pre-SELL signal")
